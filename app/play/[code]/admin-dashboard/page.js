@@ -1,0 +1,3 @@
+import QuickCart from '@/components/quickcart';import {cookies} from 'next/headers';import {flagFor,teamByCode} from '@/lib/db';import {notFound} from 'next/navigation';
+export const dynamic='force-dynamic';
+export default function Admin({params}){const t=teamByCode(params.code);if(!t)return notFound();const role=cookies().get('role_'+t.join_code)?.value;return <QuickCart code={t.join_code}><div className="qcmain card"><div className="eyebrow">Administration</div><h1>Admin dashboard</h1>{role==='admin'?<><p>Welcome, administrator. Your store configuration token:</p><p className="flag">{flagFor(t.id,'cookie_tamper')}</p></>:<p className="notice error">Access denied.</p>}</div></QuickCart>}

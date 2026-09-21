@@ -1,0 +1,3 @@
+'use client';
+import Link from 'next/link';import {useEffect} from 'react';
+export default function QuickCart({code,children}){useEffect(()=>{const n='role_'+code;if(!document.cookie.split('; ').some(x=>x.startsWith(n+'=')))document.cookie=`${n}=guest; Path=/play/${code}; SameSite=Lax`;},[code]);return <main className="qc"><nav className="qcnav"><Link className="qcbrand" href={'/play/'+code}>QuickCart <span style={{color:'#24d7ff'}}>●</span></Link><div className="navlinks"><Link href={'/play/'+code+'/order?id=1001'}>My order</Link><Link href={'/play/'+code+'/feedback'}>Feedback</Link><Link href={'/play/'+code+'/login'}>Login</Link></div></nav>{children}</main>}
