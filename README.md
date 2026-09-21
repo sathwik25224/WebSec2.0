@@ -1,31 +1,59 @@
 # Blue Hour
 
-Local, single-server Next.js vulnerability discovery and reporting game. QuickCart intentionally contains five training-only vulnerabilities and must only be exposed on a trusted event network.
+Blue Hour is a live vulnerability discovery and reporting event site. It runs on Next.js with Neon Serverless Postgres. QuickCart deliberately contains training-only vulnerabilities; deploy it only to an event-scoped environment with a dedicated database.
 
 ## Requirements
 
-Node.js 18.17+ and npm. No cloud database or external service is required after dependencies are installed.
+- Node.js 20+ for production (Node 18 is supported by the pinned local Neon driver)
+- npm
+- A Neon Postgres project
 
-## Install and configure
+## Configure
 
 ```bash
 npm install
 cp .env.example .env.local
 ```
 
-Set `ORGANIZER_PASSCODE` in `.env.local`; set a long unique `ORGANIZER_SESSION_SECRET` before the event.
+Set all values in `.env.local`:
 
-## Initialize and run
+```env
+DATABASE_URL=<Neon pooled PostgreSQL connection string>
+ORGANIZER_PASSCODE=<strong, unique password>
+ORGANIZER_SESSION_SECRET=<long random secret>
+TEAM_SESSION_SECRET=<different long random secret>
+```
+
+Never commit `.env.local`, `blue-hour.sqlite`, or `blue-hour-backup.sqlite`.
+
+## Create/update the database schema
 
 ```bash
-npm run setup
+npm run migrate
+```
+
+The migration is idempotent. It creates the schema, database-enforced indexes, team provisioning functions, and exactly five challenge definitions. It does not create demo teams or scoreboard entries.
+
+## Run locally
+
+```bash
 npm run dev
 ```
 
-Open `http://localhost:3000`. For a room network, run `npm run dev -- -H 0.0.0.0` and use the laptop’s LAN address. The SQLite file is `blue-hour.sqlite` in the project directory (or set `BLUE_HOUR_DB_PATH`).
+For an event LAN, use:
 
-The first setup starts with no teams and no public scoreboard. Participants can create their own team from `/`, or they can join an existing team with its team name and join code. Use `/organizer` to authenticate, control the timer, review reports, and clear event data. The game only accepts hints and submissions while the organizer has started the timer.
+```bash
+npm run dev -- -H 0.0.0.0
+```
+
+## Production environment variables
+
+Configure the same four variables in Vercel for Production. Use the Neon/Vercel integration or add the pooled `DATABASE_URL` manually. Deploy only after `npm run migrate` has successfully run against the production Neon database.
 
 ## Operational notes
 
-QuickCart is deliberately vulnerable by design. Put this app on an isolated classroom/event LAN, do not deploy it to the public Internet, and change the organizer secrets before use. The reset action requires an in-browser confirmation and permanently clears the event’s team-specific flags and SQLite QuickCart tables.
+- Participants can create a new team on `/` or join an existing one with the team name and join code.
+- Team dashboard, hint, and submission APIs require a signed HttpOnly team-session cookie.
+- The organizer controls the timer at `/organizer`.
+- **Clear Event Data** removes all event teams, flags, reports, hints, sessions, and per-team QuickCart tables. It retains the five challenge definitions.
+- QuickCart has intentional information disclosure, IDOR, XSS, cookie tampering, and SQL injection challenges. Do not connect it to production data or expose it beyond the event audience.

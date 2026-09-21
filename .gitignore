@@ -1,4 +1,7 @@
 node_modules/
 .next/
 .env.local
-blue-hour.sqlite
+blue-hour.sqlite*
+blue-hour-backup.sqlite*
+.vercel
+.env*

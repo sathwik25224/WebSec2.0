@@ -1,11 +1,52 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { challengeRows, controlGame, createTeam, gameState, leaderboard, resetDemo, scoreFor, statuses, submit, teamByCode, useHint, getDb } from '@/lib/db';
-import { isOrganizer, makeOrganizerToken, organizerCookie } from '@/lib/auth';
+import { controlGame, createTeam, createTeamSession, getGameState, leaderboard, organizerData, resetEvent, setQualityBonus, submit, teamByCode, teamDashboard, teamFromSession, useHint } from '@/lib/db';
+import { isOrganizer, makeOrganizerToken, organizerCookie, teamCookie } from '@/lib/auth';
+import { enforceRateLimit } from '@/lib/rate-limit';
 
-const json=(data,status=200)=>NextResponse.json(data,{status});
-const fail=(e)=>json({error:e.message||'Request failed.'},e.message?.includes('locked')?423:400);
-function organizer(){return isOrganizer(cookies().get(organizerCookie())?.value);}
-async function body(req){try{return await req.json();}catch{return {};}}
-export async function GET(req,{params}){try{const p=params.route.join('/');const u=new URL(req.url);if(p==='state')return json(gameState());if(p==='leaderboard')return json(leaderboard());if(p==='team'){const t=teamByCode(u.searchParams.get('code')?.toUpperCase());if(!t)return json({error:'Team not found.'},404);return json({team:{name:t.name,joinCode:t.join_code},score:scoreFor(t.id),game:gameState(),challenges:statuses(t.id)});}if(p==='organizer/data'){if(!organizer())return json({error:'Unauthorized.'},401);const d=getDb();return json({game:gameState(),leaderboard:leaderboard(),submissions:d.prepare('SELECT s.*,t.name team_name,v.name vulnerability FROM submissions s JOIN teams t ON t.id=s.team_id JOIN vulnerabilities v ON v.id=s.vulnerability_id ORDER BY s.submitted_at DESC').all(),hints:d.prepare('SELECT h.*,t.name team_name,v.name vulnerability FROM hints_used h JOIN teams t ON t.id=h.team_id JOIN vulnerabilities v ON v.id=h.vulnerability_id ORDER BY h.used_at DESC').all()});}return json({error:'Not found.'},404);}catch(e){return fail(e);}}
-export async function POST(req,{params}){try{const p=params.route.join('/');const b=await body(req);if(p==='join'){const t=teamByCode(String(b.joinCode||'').toUpperCase());if(!t||t.name.toLowerCase()!==String(b.name||'').trim().toLowerCase())throw Error('Team name and join code do not match.');return json({joinCode:t.join_code});}if(p==='submit'){const t=teamByCode(String(b.code||'').toUpperCase());if(!t)throw Error('Team not found.');return json(submit(t.id,b));}if(p==='hint'){const t=teamByCode(String(b.code||'').toUpperCase());if(!t)throw Error('Team not found.');return json(useHint(t.id,Number(b.vulnerabilityId),Number(b.tier)));}if(p==='organizer/login'){if(!process.env.ORGANIZER_PASSCODE)throw Error('ORGANIZER_PASSCODE is not configured.');if(String(b.passcode||'')!==process.env.ORGANIZER_PASSCODE)return json({error:'Incorrect passcode.'},401);const r=json({ok:true});r.cookies.set(organizerCookie(),makeOrganizerToken(),{httpOnly:true,sameSite:'strict',path:'/',secure:process.env.NODE_ENV==='production',maxAge:60*60*12});return r;}if(!organizer())return json({error:'Unauthorized.'},401);if(p==='organizer/team')return json(createTeam(b.name));if(p==='organizer/timer')return json(controlGame(b.action));if(p==='organizer/quality'){const n=Number(b.qualityBonus);if(!Number.isInteger(n)||n<0||n>20)throw Error('Quality bonus must be an integer from 0 to 20.');getDb().prepare('UPDATE submissions SET quality_bonus=? WHERE id=?').run(n,Number(b.submissionId));return json({ok:true});}if(p==='organizer/reset'){if(b.confirm!==true)throw Error('Confirmation is required.');resetDemo();return json({ok:true});}return json({error:'Not found.'},404);}catch(e){return fail(e);}}
+export const runtime = 'nodejs';
+const json = (data, status = 200) => NextResponse.json(data, { status });
+const fail = (error) => json({ error: error.message || 'Request failed.' }, error.message?.includes('Unauthorized') ? 401 : error.message?.includes('locked') ? 423 : error.message?.includes('Too many') ? 429 : 400);
+const organizer = () => isOrganizer(cookies().get(organizerCookie())?.value);
+async function body(request) { try { return await request.json(); } catch { return {}; } }
+async function requireTeam(expectedCode) {
+  const team = await teamFromSession(cookies().get(teamCookie())?.value);
+  if (!team || (expectedCode && team.join_code !== expectedCode)) throw Error('Unauthorized team session. Join your team again.');
+  return team;
+}
+function attachTeamCookie(response, token) { response.cookies.set(teamCookie(), token, { httpOnly: true, sameSite: 'strict', path: '/', secure: process.env.NODE_ENV === 'production', maxAge: 60 * 60 * 24 }); return response; }
+
+export async function GET(request, { params }) {
+  try {
+    const route = params.route.join('/'); const url = new URL(request.url);
+    if (route === 'state') return json(await getGameState());
+    if (route === 'leaderboard') return json(await leaderboard());
+    if (route === 'team') { const team = await requireTeam(url.searchParams.get('code')?.toUpperCase()); return json(await teamDashboard(team.id)); }
+    if (route === 'organizer/data') { if (!organizer()) throw Error('Unauthorized.'); return json(await organizerData()); }
+    return json({ error: 'Not found.' }, 404);
+  } catch (error) { return fail(error); }
+}
+export async function POST(request, { params }) {
+  try {
+    const route = params.route.join('/'); const data = await body(request);
+    if (route === 'join') {
+      enforceRateLimit(request, 'join', 12, 60_000);
+      const team = await teamByCode(String(data.joinCode || '').toUpperCase());
+      if (!team || team.name.toLowerCase() !== String(data.name || '').trim().toLowerCase()) throw Error('Team name and join code do not match.');
+      return attachTeamCookie(json({ joinCode: team.join_code }), await createTeamSession(team.id));
+    }
+    if (route === 'submit') { enforceRateLimit(request, 'submit', 30, 60_000); const team = await requireTeam(); return json(await submit(team.id, data)); }
+    if (route === 'hint') { const team = await requireTeam(); return json(await useHint(team.id, Number(data.vulnerabilityId), Number(data.tier))); }
+    if (route === 'organizer/login') {
+      enforceRateLimit(request, 'organizer-login', 8, 15 * 60_000);
+      if (!process.env.ORGANIZER_PASSCODE || String(data.passcode || '') !== process.env.ORGANIZER_PASSCODE) return json({ error: 'Incorrect passcode.' }, 401);
+      const response = json({ ok: true }); response.cookies.set(organizerCookie(), makeOrganizerToken(), { httpOnly: true, sameSite: 'strict', path: '/', secure: process.env.NODE_ENV === 'production', maxAge: 60 * 60 * 12 }); return response;
+    }
+    if (!organizer()) throw Error('Unauthorized.');
+    if (route === 'organizer/team') return json(await createTeam(data.name));
+    if (route === 'organizer/timer') return json(await controlGame(data.action));
+    if (route === 'organizer/quality') { await setQualityBonus(data.submissionId, data.qualityBonus); return json({ ok: true }); }
+    if (route === 'organizer/reset') { if (data.confirm !== true) throw Error('Confirmation is required.'); await resetEvent(); return json({ ok: true }); }
+    return json({ error: 'Not found.' }, 404);
+  } catch (error) { return fail(error); }
+}

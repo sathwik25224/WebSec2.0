@@ -1,3 +1,15 @@
-import QuickCart from '@/components/quickcart';import {getDb,safeCode,teamByCode} from '@/lib/db';import {notFound} from 'next/navigation';
-export const dynamic='force-dynamic';
-export default function Login({params,searchParams}){const t=teamByCode(params.code);if(!t||!safeCode(t.join_code))return notFound();let row,err;const u=String(searchParams.username||''),p=String(searchParams.password||'');if(u||p){try{const table='users_'+t.join_code,sec='secrets_'+t.join_code;row=getDb().prepare(`SELECT username,password,display_name,(SELECT secret FROM "${sec}" LIMIT 1) AS secret FROM "${table}" WHERE username = '${u}' AND password = '${p}'`).get();}catch(e){err=e.message;}}return <QuickCart code={t.join_code}><div className="qcmain"><div className="eyebrow">Account access</div><h1>Sign in to QuickCart</h1><form method="GET" className="card join" style={{maxWidth:520}}><label>Username<input name="username" defaultValue={u}/></label><label>Password<input type="password" name="password" defaultValue={p}/></label><button className="btn">Sign in</button></form>{row&&<div className="notice success" style={{marginTop:16}}>Welcome, {row.display_name||row.username}. Authentication query returned a record.<br/><span className="flag">{row.secret}</span></div>}{err&&<div className="notice error" style={{marginTop:16}}>Database error: {err}</div>}</div></QuickCart>}
+import QuickCart from '@/components/quickcart';
+import { attemptSqlInjection, safeCode, teamByCode } from '@/lib/db';
+import { notFound } from 'next/navigation';
+import { headers } from 'next/headers';
+import { enforceRateLimitKey } from '@/lib/rate-limit';
+export const dynamic = 'force-dynamic';
+
+export default async function Login({ params, searchParams }) {
+  const team = await teamByCode(params.code);
+  if (!team || !safeCode(team.join_code)) return notFound();
+  const username = String(searchParams.username || ''); const password = String(searchParams.password || '');
+  let result; let error;
+  if (username || password) { try { const ip = headers().get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'; enforceRateLimitKey(`quickcart-login:${ip}`, 30, 60_000); result = await attemptSqlInjection(team.join_code, username, password); } catch (caught) { error = caught.message; } }
+  return <QuickCart code={team.join_code}><div className="qcmain"><div className="eyebrow">Account access</div><h1>Sign in to QuickCart</h1><form method="GET" className="card join" style={{ maxWidth: 520 }}><label>Username<input name="username" defaultValue={username}/></label><label>Password<input type="password" name="password" defaultValue={password}/></label><button className="btn">Sign in</button></form>{result?.rows?.length > 0 && <div className="notice success" style={{ marginTop: 16 }}>Authentication query returned {result.rows.length} record{result.rows.length === 1 ? '' : 's'}.</div>}{result?.secret && <div className="notice success" style={{ marginTop: 16 }}>A database query selected a protected secret:<br/><span className="flag">{result.secret}</span></div>}{error && <div className="notice error" style={{ marginTop: 16 }}>Database error: {error}</div>}</div></QuickCart>;
+}

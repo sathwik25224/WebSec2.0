@@ -7,11 +7,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "setup": "node scripts/setup.mjs",
-    "reset-event": "node scripts/setup.mjs --reset"
+    "migrate": "node scripts/migrate-postgres.mjs",
+    "setup": "npm run migrate"
   },
   "dependencies": {
-    "better-sqlite3": "^11.8.1",
+    "@neondatabase/serverless": "^0.10.4",
     "next": "^14.2.25",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
