@@ -6,10 +6,10 @@ import { enforceRateLimit } from '@/lib/rate-limit';
 export const runtime = 'nodejs';
 export async function POST(request) {
   try {
-    enforceRateLimit(request, 'team-create', 5, 15 * 60_000);
+    enforceRateLimit(request, 'team-create', 250, 15 * 60_000);
     const { name } = await request.json();
     const team = await createTeam(name);
-    const response = NextResponse.json(team);
+    const response = NextResponse.json(team, { headers: { 'Cache-Control': 'no-store' } });
     response.cookies.set(teamCookie(), await createTeamSession(team.id), { httpOnly: true, sameSite: 'strict', path: '/', secure: process.env.NODE_ENV === 'production', maxAge: 60 * 60 * 24 });
     return response;
   } catch (error) {

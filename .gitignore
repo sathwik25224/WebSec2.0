@@ -5,3 +5,4 @@ blue-hour.sqlite*
 blue-hour-backup.sqlite*
 .vercel
 .env*
+!.env.example

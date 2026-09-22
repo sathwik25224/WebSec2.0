@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { controlGame, createTeam, createTeamSession, getGameState, leaderboard, organizerData, resetEvent, setQualityBonus, submit, teamByCode, teamDashboard, teamFromSession, useHint } from '@/lib/db';
 import { isOrganizer, makeOrganizerToken, organizerCookie, teamCookie } from '@/lib/auth';
-import { enforceRateLimit } from '@/lib/rate-limit';
+import { enforceRateLimit, enforceRateLimitKey } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
-const json = (data, status = 200) => NextResponse.json(data, { status });
+const json = (data, status = 200) => NextResponse.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
 const fail = (error) => json({ error: error.message || 'Request failed.' }, error.message?.includes('Unauthorized') ? 401 : error.message?.includes('locked') ? 423 : error.message?.includes('Too many') ? 429 : 400);
 const organizer = () => isOrganizer(cookies().get(organizerCookie())?.value);
 async function body(request) { try { return await request.json(); } catch { return {}; } }
@@ -30,16 +30,17 @@ export async function POST(request, { params }) {
   try {
     const route = params.route.join('/'); const data = await body(request);
     if (route === 'join') {
-      enforceRateLimit(request, 'join', 12, 60_000);
+      enforceRateLimit(request, 'join', 300, 60_000);
       const team = await teamByCode(String(data.joinCode || '').toUpperCase());
       if (!team || team.name.toLowerCase() !== String(data.name || '').trim().toLowerCase()) throw Error('Team name and join code do not match.');
       return attachTeamCookie(json({ joinCode: team.join_code }), await createTeamSession(team.id));
     }
-    if (route === 'submit') { enforceRateLimit(request, 'submit', 30, 60_000); const team = await requireTeam(); return json(await submit(team.id, data)); }
+    if (route === 'submit') { const team = await requireTeam(); enforceRateLimitKey(`submit:team:${team.id}`, 30, 60_000); return json(await submit(team.id, data)); }
     if (route === 'hint') { const team = await requireTeam(); return json(await useHint(team.id, Number(data.vulnerabilityId), Number(data.tier))); }
     if (route === 'organizer/login') {
-      enforceRateLimit(request, 'organizer-login', 8, 15 * 60_000);
-      if (!process.env.ORGANIZER_PASSCODE || String(data.passcode || '') !== process.env.ORGANIZER_PASSCODE) return json({ error: 'Incorrect passcode.' }, 401);
+      enforceRateLimit(request, 'organizer-login', 300, 15 * 60_000);
+      if (!process.env.ORGANIZER_PASSCODE || process.env.ORGANIZER_PASSCODE.length < 16 || process.env.ORGANIZER_PASSCODE === 'change-this-before-the-event') throw Error('ORGANIZER_PASSCODE is not configured securely.');
+      if (String(data.passcode || '') !== process.env.ORGANIZER_PASSCODE) return json({ error: 'Incorrect passcode.' }, 401);
       const response = json({ ok: true }); response.cookies.set(organizerCookie(), makeOrganizerToken(), { httpOnly: true, sameSite: 'strict', path: '/', secure: process.env.NODE_ENV === 'production', maxAge: 60 * 60 * 12 }); return response;
     }
     if (!organizer()) throw Error('Unauthorized.');
